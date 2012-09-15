@@ -1,0 +1,167 @@
+====================================================================================
+Gamieon Unity network wrapper
+By Christopher Haag
+Gamieon, Inc.
+http://www.gamieon.com
+====================================================================================
+
+This is a simple project that has a number of scripts designed to be re-used in other Unity applications.
+It is designed to offer a way to prevent all of your scripts from looking like:
+
+	...
+	if (networked) { do this; }
+	else { do that; }
+	...
+
+By centralizing GameObject instantiation, destruction, message passing and player management into
+a single persistent GameObject that has several scripts with functions you can use.
+
+For example, if you want to create a bullet, you wouldn't do:
+
+	if (networked) { Network.Instantiate(...); }
+	else { GameObject.Instantiate(...); }
+
+You could instead just do:
+
+	inputDirector.InstantiateObject(...);
+
+and it will get the job done.
+
+If your game is not single player or you just connect to yourself to play locally, then that is of little
+value. However, these scripts also manage searching for instances of your game online (even on LAN's), 
+notifying players when other players join and leave in your game; and even support ban lists (in memory only).
+
+This project also provides a very simple example of how Unity networking mechanics work. A number of Debug.Log
+messages are scattered throughout the code so you can observe them and better understand things.
+
+
+===========================================================================================================
+Relevant files you shouldn't have to change
+===========================================================================================================
+Client.cs - Represents the user's existence in the application. All non-application-specific player management
+happens here. This component must be a subclass of the actual application-specific user component.
+
+InputDirector.cs - The main hub responsible for dispatching player events, hosting games and joining games.
+There is only ever once instance of this component, and it persists throughout the application's lifetime.
+
+LANBroadcastService.cs - Lower level code used to find LAN players using UDP multicasting
+
+MasterServerDirector.cs - Used for players to find each other over both LANs and WANs
+
+PlayerAttributes.cs - Retains player ID's, names, and eventually custom fields like achievements and more.
+
+Server.cs - Whether you are a client or hosting the game, this acts as an interface to the list of players
+and other authoritative operations.
+
+
+===========================================================================================================
+Game-specific files used in this sample project
+===========================================================================================================
+
+ConfigurationDirector.cs - Controls server rules and player configuration
+
+ConnectionFailureSceneDirector.cs - Manages the scene you see when you fail to connect to a server
+
+ConsoleDirector.cs - Right now it simply forwards logging messages to the Unity console, but it is intended
+to be the game's console controller where you can see an event history and also handle commands.
+
+GameDirector.cs - Responsible for dealing with getting a player set up to begin playing a round of the game.
+
+GameRules_FFA.cs - Defines how players set themselves up to play a free for all game, and the rules to win.
+
+Player.cs - Represents the user's existence in the application. There is only ever once instance of this component, 
+and it persists throughout the application's lifetime. It is inherited from the Client component.
+
+VersionDirector.cs - Simple application versioning properties
+
+
+
+===========================================================================================================
+The chain of events when hosting a game
+===========================================================================================================
+
+1. When the application is launched, Player.Create() is called. This creates a new GameObject in the initial scene
+that encapsulates these components: InputDirector, LANBroadcastService, MasterServerDirector, Player (inherited
+from Client). This GameObject will persist throughout the lifetime of the application.
+
+2. InputDirector.HostServer is called to launch the host.
+
+3. InputDirector sends OnHostServerComplete message to its game object.
+
+4. Client component catches OnHostServerComplete message and "registers" itself with the server by calling
+Server.Register. Registering with the server is a level of authentication above Unity's engine; clients do
+it as an RPC call to give the servers their name, version, any unique ID's, and IP address to check against 
+a ban list.
+
+5. OnRegisteredWithServer is called on the Player object, and it goes into the game by calling 
+InputDirector.LoadScene. A buffered RPC call is made to load the level; this way, new players know to go into that same level.
+
+6. Unity calls Client.OnLevelWasLoaded, and it notifies all game objects in the scene with a call to
+OnNetworkLoadedLevel.
+
+7. The GameDirector object, which exists in the new scene, gets the OnNetworkLoadedLevel message. It checks
+the application's configuration for what kind of game is playing (in this case, a free-for-all). It then
+sends another buffered RPC call called "OnDefineGameRules" that informs all incoming clients of what kind
+of game is being played.
+
+8. The Player object, which is in the same game object as the InputDirector component, will get the OnDefineGameRules
+message and handle it by sending a OnGameRulesDefined message to the GameDirector object.
+
+9. The GameDirector object gets the OnGameRulesDefined message, and creates a GameRules-inherited component for its game object
+based on what. The GameRules component dictates things like how to win a game, scoring rules, and so forth. The GameDirector
+object then sends an OnHostBeginGame message to its game object.
+
+10. The GameRules_FFA component gets the OnHostBeginGame message, and sends a message back to the Player component's game object
+of OnSpawnSpaceship to have a player spawn its spaceship. It's important to understand that the Player component and the Spaceship
+components are two completely different things.
+
+11. The player instructs the input director to instantiate the spaceship. It will then keep a handle to its spaceship and
+invoke a buffered RPC call to set the spaceship attributes.
+
+12. The created spaceship gets the OnSetSpaceshipAttributes message and has its attributes assigned to it.
+
+
+===========================================================================================================
+The chain of events when connecting to a game
+===========================================================================================================
+
+1. When the application is launched, Player.Create() is called. This creates a new GameObject in the initial scene
+that encapsulates these components: InputDirector, LANBroadcastService, MasterServerDirector, Player (inherited
+from Client). This GameObject will persist throughout the lifetime of the application.
+
+2. InputDirector.ConnectToServer is calle to connect to the remote host.
+
+3. After Unity sends the OnConnectedToServer message to the InputDirector, the InputDirector will send a OnConnectToServerComplete
+message that the Client component will get.
+
+4. The Client component will call Server.Register to "register" itself with the server. Registering with the server
+is a level of authentication above Unity's engine; clients do it as an RPC call to give the servers their name, version, 
+any unique ID's, and IP address to check against a ban list.
+
+5. At this point, the server is sending buffered RPC's to you. The first buffered RPC message, OnLoadNetworkLevel, will
+have you load the game scene. The next messages are OnPlayerRegistered messages that other players sent; server included,
+when they joined the game. This is how you get a list of everyone in the game. You also get a OnDefineGameRules message
+which contains information about the game you're playing. In this case, the rules are a simple "Free For All" string, which
+tells the application that everyone spawns at will and it's just going to be a shootout. The Player component stores those 
+rules for later so we know how to spawn our spaceship after we've registered. 
+
+6. The server approves your request to register, and you get a OnRegisteredWithServer message back in the Player component
+that contains your new player ID. After getting this, you send a buffered OnPlayerRegistered message to everyone to "introduce"
+yourself to everyone in the game; server included.
+
+7. Everyone, yourself included, gets the OnPlayerRegistered message and you show up in all the player lists. Now that you've
+registered, and you know the game rules, you're ready to start playing. The Player component sends a OnGameRulesDefined message
+to the GameDirector component over in another GameObject. 
+
+8. The GameDirector component gets OnGameRulesDefined, creates a GameRules_FFA component, and sends an OnBeginGame message
+to that component.
+
+9. The GameRules_FFA component sends a message to your InputDirector GameObject called OnSpawnSpaceship; which the Player
+component picks up and uses InputDirector.instantiate to create your spaceship so that everyone in the game can see it.
+
+10. The player instructs the input director to instantiate the spaceship. It will then keep a handle to its spaceship and
+invoke a buffered RPC call to set the spaceship attributes.
+
+11. The created spaceship gets the OnSetSpaceshipAttributes message and has its attributes assigned to it.
+
+
