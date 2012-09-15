@@ -26,6 +26,6 @@ public class VersionDirector
 	/// </returns>
 	static public string GetGameTypeName()
 	{
-		return "Vengance " + GetVersion();
+		return "UniNetShooter " + GetVersion();
 	}
 }
